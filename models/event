@@ -1,0 +1,13 @@
+// models/Event.js
+
+const mongoose = require('mongoose');
+
+const eventSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  description: String,
+  date: { type: Date, required: true },
+  isPublic: { type: Boolean, default: true },
+  invitedUsers: [{ type: String }] // SL usernames or IDs
+});
+
+module.exports = mongoose.model('Event', eventSchema);
