@@ -51,7 +51,7 @@ const Achievement = mongoose.model('Achievement', achievementSchema);
 // User Progress Schema
 const userProgressSchema = new mongoose.Schema({
     userID: { type: String, required: true },
-    achievements: { type: [String], default: [] }, // Earned badges
+    achievements: { type: [String], default: [] },
     socialGoals: {
         dailyGoalsCompleted: { type: Number, default: 0 },
         weeklyGoalsCompleted: { type: Number, default: 0 }
@@ -62,6 +62,16 @@ const userProgressSchema = new mongoose.Schema({
     }
 });
 const UserProgress = mongoose.model('UserProgress', userProgressSchema);
+
+// Notification Schema
+const notificationSchema = new mongoose.Schema({
+    user_id: { type: String, required: true },
+    type: { type: String, required: true },
+    message: { type: String, required: true },
+    created_at: { type: Date, default: Date.now },
+    read: { type: Boolean, default: false }
+});
+const Notification = mongoose.model('Notification', notificationSchema);
 
 // Create Event API
 app.post('/create-event', async (req, res) => {
@@ -194,6 +204,47 @@ app.post('/user/add-goal', async (req, res) => {
         res.json({ message: 'Goal added!', goals: userProgress.currentGoals });
     } catch (err) {
         console.error('Error adding goal:', err);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+// Create Notification API
+app.post('/notifications', async (req, res) => {
+    try {
+        const newNotif = new Notification(req.body);
+        await newNotif.save();
+        res.status(201).json({ message: 'Notification created', notification: newNotif });
+    } catch (err) {
+        console.error('Error creating notification:', err);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+// Get Notifications for User
+app.get('/notifications/:userID', async (req, res) => {
+    try {
+        const notifs = await Notification.find({ user_id: req.params.userID });
+        res.json(notifs);
+    } catch (err) {
+        console.error('Error fetching notifications:', err);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+// Mark Notification as Read
+app.put('/notifications/:id/read', async (req, res) => {
+    try {
+        const notif = await Notification.findByIdAndUpdate(
+            req.params.id,
+            { read: true },
+            { new: true }
+        );
+        if (!notif) {
+            return res.status(404).json({ message: 'Notification not found' });
+        }
+        res.json({ message: 'Notification marked as read', notification: notif });
+    } catch (err) {
+        console.error('Error updating notification:', err);
         res.status(500).send('Internal Server Error');
     }
 });
