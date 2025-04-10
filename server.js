@@ -19,18 +19,17 @@ db.once("open", () => {
     console.log("Connected to MongoDB successfully!");
 });
 
-// Event Schema
+// Schemas and Models
 const eventSchema = new mongoose.Schema({
     name: String,
     date: Date,
     time: String,
     location: String,
-    type: String, // public or private
-    rsvp: [String] // list of RSVPs (usernames)
+    type: String,
+    rsvp: [String]
 });
 const Event = mongoose.model('Event', eventSchema);
 
-// Check-In Schema
 const checkInSchema = new mongoose.Schema({
     userID: { type: String, required: true },
     location: { type: String, required: true },
@@ -40,7 +39,6 @@ const checkInSchema = new mongoose.Schema({
 });
 const CheckIn = mongoose.model('CheckIn', checkInSchema);
 
-// Achievement Schema
 const achievementSchema = new mongoose.Schema({
     name: { type: String, required: true },
     criteria: { type: Object, required: true },
@@ -48,14 +46,12 @@ const achievementSchema = new mongoose.Schema({
 });
 const Achievement = mongoose.model('Achievement', achievementSchema);
 
-// Favorite Schema
 const favoriteSchema = new mongoose.Schema({
     title: { type: String },
     url: { type: String, required: true },
     addedAt: { type: Date, default: Date.now }
 });
 
-// User Progress Schema
 const userProgressSchema = new mongoose.Schema({
     userID: { type: String, required: true },
     achievements: { type: [String], default: [] },
@@ -72,23 +68,21 @@ const userProgressSchema = new mongoose.Schema({
         default: []
     },
     groups: {
-        type: [mongoose.Schema.Types.ObjectId], // Reference to Group Schema
+        type: [mongoose.Schema.Types.ObjectId],
         ref: 'Group',
         default: []
     }
 });
 const UserProgress = mongoose.model('UserProgress', userProgressSchema);
 
-// Group Schema
 const groupSchema = new mongoose.Schema({
     name: { type: String, required: true },
     description: { type: String },
-    members: { type: [String], default: [] }, // List of User IDs
+    members: { type: [String], default: [] },
     createdAt: { type: Date, default: Date.now }
 });
 const Group = mongoose.model('Group', groupSchema);
 
-// Notification Schema
 const notificationSchema = new mongoose.Schema({
     user_id: { type: String, required: true },
     type: { type: String, required: true },
@@ -98,20 +92,23 @@ const notificationSchema = new mongoose.Schema({
 });
 const Notification = mongoose.model('Notification', notificationSchema);
 
-// API to Create a Group
+const friendshipSchema = new mongoose.Schema({
+    userA: String,
+    userB: String,
+    score: { type: Number, default: 0 },
+    lastInteraction: { type: Date, default: Date.now }
+});
+const Friendship = mongoose.model('Friendship', friendshipSchema);
+
+// Routes
+
+// Group APIs
 app.post('/create-group', async (req, res) => {
     const { name, description, members } = req.body;
-
     try {
-        const newGroup = new Group({
-            name,
-            description,
-            members
-        });
-
+        const newGroup = new Group({ name, description, members });
         await newGroup.save();
 
-        // Optionally, update user progress to include the new group
         for (const userID of members) {
             await UserProgress.findOneAndUpdate(
                 { userID },
@@ -126,23 +123,18 @@ app.post('/create-group', async (req, res) => {
     }
 });
 
-// API to Add a User to a Group
 app.post('/add-to-group', async (req, res) => {
     const { groupID, userID } = req.body;
 
     try {
         const group = await Group.findById(groupID);
-        if (!group) {
-            return res.status(404).json({ message: 'Group not found' });
-        }
+        if (!group) return res.status(404).json({ message: 'Group not found' });
 
-        // Add user to group
         if (!group.members.includes(userID)) {
             group.members.push(userID);
             await group.save();
         }
 
-        // Update UserProgress with group information
         await UserProgress.findOneAndUpdate(
             { userID },
             { $push: { groups: groupID } }
@@ -155,21 +147,16 @@ app.post('/add-to-group', async (req, res) => {
     }
 });
 
-// API to Remove a User from a Group
 app.post('/remove-from-group', async (req, res) => {
     const { groupID, userID } = req.body;
 
     try {
         const group = await Group.findById(groupID);
-        if (!group) {
-            return res.status(404).json({ message: 'Group not found' });
-        }
+        if (!group) return res.status(404).json({ message: 'Group not found' });
 
-        // Remove user from group
         group.members = group.members.filter(member => member !== userID);
         await group.save();
 
-        // Remove group from UserProgress
         await UserProgress.findOneAndUpdate(
             { userID },
             { $pull: { groups: groupID } }
@@ -182,13 +169,10 @@ app.post('/remove-from-group', async (req, res) => {
     }
 });
 
-// API to Fetch Group by ID
 app.get('/group/:groupID', async (req, res) => {
     try {
         const group = await Group.findById(req.params.groupID);
-        if (!group) {
-            return res.status(404).json({ message: 'Group not found' });
-        }
+        if (!group) return res.status(404).json({ message: 'Group not found' });
         res.json(group);
     } catch (err) {
         console.error('Error fetching group:', err);
@@ -196,17 +180,57 @@ app.get('/group/:groupID', async (req, res) => {
     }
 });
 
-// API to Fetch Groups for a User
 app.get('/user/groups/:userID', async (req, res) => {
     try {
         const userProgress = await UserProgress.findOne({ userID: req.params.userID }).populate('groups');
-        if (!userProgress) {
-            return res.status(404).json({ message: 'User not found' });
-        }
+        if (!userProgress) return res.status(404).json({ message: 'User not found' });
         res.json(userProgress.groups);
     } catch (err) {
         console.error('Error fetching user groups:', err);
         res.status(500).send('Internal Server Error');
+    }
+});
+
+// New Routes: Check-ins, Achievements, Friendships
+
+app.post('/checkin', async (req, res) => {
+    const { userID, location, companions = [], socialPoints = 0 } = req.body;
+    try {
+        const checkIn = new CheckIn({ userID, location, companions, socialPoints });
+        await checkIn.save();
+        res.status(201).json({ message: "Check-in successful!", checkIn });
+    } catch (err) {
+        console.error("Check-in error:", err);
+        res.status(500).send("Internal Server Error");
+    }
+});
+
+app.post('/unlock-achievement', async (req, res) => {
+    const { userID, achievementName } = req.body;
+    try {
+        await UserProgress.findOneAndUpdate(
+            { userID },
+            { $addToSet: { achievements: achievementName } }
+        );
+        res.json({ message: "Achievement unlocked!" });
+    } catch (err) {
+        console.error("Error unlocking achievement:", err);
+        res.status(500).send("Internal Server Error");
+    }
+});
+
+app.post('/update-friendship', async (req, res) => {
+    const { userA, userB, scoreChange = 1 } = req.body;
+    try {
+        const friendship = await Friendship.findOneAndUpdate(
+            { userA, userB },
+            { $inc: { score: scoreChange }, $set: { lastInteraction: new Date() } },
+            { upsert: true, new: true }
+        );
+        res.json({ message: "Friendship updated", friendship });
+    } catch (err) {
+        console.error("Error updating friendship:", err);
+        res.status(500).send("Internal Server Error");
     }
 });
 
