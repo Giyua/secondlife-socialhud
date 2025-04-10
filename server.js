@@ -26,9 +26,8 @@ const eventSchema = new mongoose.Schema({
     time: String,
     location: String,
     type: String, // public or private
-    rsvp: [String], // list of RSVPs (usernames)
+    rsvp: [String] // list of RSVPs (usernames)
 });
-
 const Event = mongoose.model('Event', eventSchema);
 
 // Check-In Schema
@@ -39,8 +38,30 @@ const checkInSchema = new mongoose.Schema({
     socialPoints: { type: Number, default: 0 },
     timestamp: { type: Date, default: Date.now }
 });
-
 const CheckIn = mongoose.model('CheckIn', checkInSchema);
+
+// Achievement Schema
+const achievementSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    criteria: { type: Object, required: true },
+    reward: { type: Object, required: true }
+});
+const Achievement = mongoose.model('Achievement', achievementSchema);
+
+// User Progress Schema
+const userProgressSchema = new mongoose.Schema({
+    userID: { type: String, required: true },
+    achievements: { type: [String], default: [] }, // Earned badges
+    socialGoals: {
+        dailyGoalsCompleted: { type: Number, default: 0 },
+        weeklyGoalsCompleted: { type: Number, default: 0 }
+    },
+    currentGoals: {
+        type: [{ name: String, progress: Number, target: Number }],
+        default: []
+    }
+});
+const UserProgress = mongoose.model('UserProgress', userProgressSchema);
 
 // Create Event API
 app.post('/create-event', async (req, res) => {
@@ -92,6 +113,87 @@ app.get('/check-ins/:userID', async (req, res) => {
         }
     } catch (err) {
         console.error('Error fetching check-ins:', err);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+// Fetch Achievements for a User API
+app.get('/user/achievements/:userID', async (req, res) => {
+    try {
+        const userProgress = await UserProgress.findOne({ userID: req.params.userID });
+        if (!userProgress) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        res.json(userProgress.achievements);
+    } catch (err) {
+        console.error('Error fetching achievements:', err);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+// Add Achievement to a User API
+app.post('/user/add-achievement', async (req, res) => {
+    const { userID, achievementName } = req.body;
+
+    try {
+        const achievement = await Achievement.findOne({ name: achievementName });
+        if (!achievement) {
+            return res.status(404).json({ message: 'Achievement not found' });
+        }
+
+        const userProgress = await UserProgress.findOneAndUpdate(
+            { userID },
+            { $push: { achievements: achievement.reward.badge } },
+            { new: true, upsert: true }
+        );
+
+        res.json({ message: 'Achievement added!', achievements: userProgress.achievements });
+    } catch (err) {
+        console.error('Error adding achievement:', err);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+// Update Progress Toward Social Goals API
+app.post('/user/progress', async (req, res) => {
+    const { userID, goalName, increment } = req.body;
+
+    try {
+        const userProgress = await UserProgress.findOne({ userID });
+        if (!userProgress) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        const goal = userProgress.currentGoals.find(g => g.name === goalName);
+        if (goal) {
+            goal.progress += increment;
+            if (goal.progress >= goal.target) {
+                userProgress.socialGoals.dailyGoalsCompleted += 1;
+                userProgress.currentGoals = userProgress.currentGoals.filter(g => g.name !== goalName);
+            }
+        }
+
+        await userProgress.save();
+        res.json(userProgress);
+    } catch (err) {
+        console.error('Error updating progress:', err);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+// Add Social Goal to a User API
+app.post('/user/add-goal', async (req, res) => {
+    const { userID, goalName, target } = req.body;
+
+    try {
+        const userProgress = await UserProgress.findOneAndUpdate(
+            { userID },
+            { $push: { currentGoals: { name: goalName, progress: 0, target } } },
+            { new: true, upsert: true }
+        );
+        res.json({ message: 'Goal added!', goals: userProgress.currentGoals });
+    } catch (err) {
+        console.error('Error adding goal:', err);
         res.status(500).send('Internal Server Error');
     }
 });
