@@ -48,6 +48,13 @@ const achievementSchema = new mongoose.Schema({
 });
 const Achievement = mongoose.model('Achievement', achievementSchema);
 
+// Favorite Schema
+const favoriteSchema = new mongoose.Schema({
+    title: { type: String },
+    url: { type: String, required: true },
+    addedAt: { type: Date, default: Date.now }
+});
+
 // User Progress Schema
 const userProgressSchema = new mongoose.Schema({
     userID: { type: String, required: true },
@@ -59,9 +66,27 @@ const userProgressSchema = new mongoose.Schema({
     currentGoals: {
         type: [{ name: String, progress: Number, target: Number }],
         default: []
+    },
+    favorites: {
+        type: [favoriteSchema],
+        default: []
+    },
+    groups: {
+        type: [mongoose.Schema.Types.ObjectId], // Reference to Group Schema
+        ref: 'Group',
+        default: []
     }
 });
 const UserProgress = mongoose.model('UserProgress', userProgressSchema);
+
+// Group Schema
+const groupSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    description: { type: String },
+    members: { type: [String], default: [] }, // List of User IDs
+    createdAt: { type: Date, default: Date.now }
+});
+const Group = mongoose.model('Group', groupSchema);
 
 // Notification Schema
 const notificationSchema = new mongoose.Schema({
@@ -73,178 +98,114 @@ const notificationSchema = new mongoose.Schema({
 });
 const Notification = mongoose.model('Notification', notificationSchema);
 
-// Create Event API
-app.post('/create-event', async (req, res) => {
-    try {
-        const newEvent = new Event(req.body);
-        await newEvent.save();
-        res.send('Event Created');
-    } catch (err) {
-        console.error('Error Creating Event:', err);
-        res.status(500).send('Internal Server Error');
-    }
-});
-
-// Fetch Events API
-app.get('/events', async (req, res) => {
-    try {
-        const events = await Event.find();
-        res.json(events);
-    } catch (err) {
-        console.error('Error Fetching Events:', err);
-        res.status(500).send('Internal Server Error');
-    }
-});
-
-// Create Check-In API
-app.post('/check-in', async (req, res) => {
-    const { userID, location, companions, socialPoints } = req.body;
+// API to Create a Group
+app.post('/create-group', async (req, res) => {
+    const { name, description, members } = req.body;
 
     try {
-        const newCheckIn = new CheckIn({ userID, location, companions, socialPoints });
-        await newCheckIn.save();
-        res.status(201).json({ message: 'Check-in successful!', checkIn: newCheckIn });
-    } catch (err) {
-        console.error('Error during check-in:', err);
-        res.status(500).send('Internal Server Error');
-    }
-});
+        const newGroup = new Group({
+            name,
+            description,
+            members
+        });
 
-// Fetch Check-Ins API
-app.get('/check-ins/:userID', async (req, res) => {
-    const { userID } = req.params;
+        await newGroup.save();
 
-    try {
-        const checkIns = await CheckIn.find({ userID });
-        if (!checkIns.length) {
-            res.status(404).json({ message: 'No check-ins found for this user.' });
-        } else {
-            res.json(checkIns);
+        // Optionally, update user progress to include the new group
+        for (const userID of members) {
+            await UserProgress.findOneAndUpdate(
+                { userID },
+                { $push: { groups: newGroup._id } }
+            );
         }
+
+        res.status(201).json({ message: 'Group created successfully!', group: newGroup });
     } catch (err) {
-        console.error('Error fetching check-ins:', err);
+        console.error('Error creating group:', err);
         res.status(500).send('Internal Server Error');
     }
 });
 
-// Fetch Achievements for a User API
-app.get('/user/achievements/:userID', async (req, res) => {
+// API to Add a User to a Group
+app.post('/add-to-group', async (req, res) => {
+    const { groupID, userID } = req.body;
+
     try {
-        const userProgress = await UserProgress.findOne({ userID: req.params.userID });
+        const group = await Group.findById(groupID);
+        if (!group) {
+            return res.status(404).json({ message: 'Group not found' });
+        }
+
+        // Add user to group
+        if (!group.members.includes(userID)) {
+            group.members.push(userID);
+            await group.save();
+        }
+
+        // Update UserProgress with group information
+        await UserProgress.findOneAndUpdate(
+            { userID },
+            { $push: { groups: groupID } }
+        );
+
+        res.json({ message: 'User added to group successfully', group });
+    } catch (err) {
+        console.error('Error adding user to group:', err);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+// API to Remove a User from a Group
+app.post('/remove-from-group', async (req, res) => {
+    const { groupID, userID } = req.body;
+
+    try {
+        const group = await Group.findById(groupID);
+        if (!group) {
+            return res.status(404).json({ message: 'Group not found' });
+        }
+
+        // Remove user from group
+        group.members = group.members.filter(member => member !== userID);
+        await group.save();
+
+        // Remove group from UserProgress
+        await UserProgress.findOneAndUpdate(
+            { userID },
+            { $pull: { groups: groupID } }
+        );
+
+        res.json({ message: 'User removed from group successfully', group });
+    } catch (err) {
+        console.error('Error removing user from group:', err);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+// API to Fetch Group by ID
+app.get('/group/:groupID', async (req, res) => {
+    try {
+        const group = await Group.findById(req.params.groupID);
+        if (!group) {
+            return res.status(404).json({ message: 'Group not found' });
+        }
+        res.json(group);
+    } catch (err) {
+        console.error('Error fetching group:', err);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+// API to Fetch Groups for a User
+app.get('/user/groups/:userID', async (req, res) => {
+    try {
+        const userProgress = await UserProgress.findOne({ userID: req.params.userID }).populate('groups');
         if (!userProgress) {
             return res.status(404).json({ message: 'User not found' });
         }
-        res.json(userProgress.achievements);
+        res.json(userProgress.groups);
     } catch (err) {
-        console.error('Error fetching achievements:', err);
-        res.status(500).send('Internal Server Error');
-    }
-});
-
-// Add Achievement to a User API
-app.post('/user/add-achievement', async (req, res) => {
-    const { userID, achievementName } = req.body;
-
-    try {
-        const achievement = await Achievement.findOne({ name: achievementName });
-        if (!achievement) {
-            return res.status(404).json({ message: 'Achievement not found' });
-        }
-
-        const userProgress = await UserProgress.findOneAndUpdate(
-            { userID },
-            { $push: { achievements: achievement.reward.badge } },
-            { new: true, upsert: true }
-        );
-
-        res.json({ message: 'Achievement added!', achievements: userProgress.achievements });
-    } catch (err) {
-        console.error('Error adding achievement:', err);
-        res.status(500).send('Internal Server Error');
-    }
-});
-
-// Update Progress Toward Social Goals API
-app.post('/user/progress', async (req, res) => {
-    const { userID, goalName, increment } = req.body;
-
-    try {
-        const userProgress = await UserProgress.findOne({ userID });
-        if (!userProgress) {
-            return res.status(404).json({ message: 'User not found' });
-        }
-
-        const goal = userProgress.currentGoals.find(g => g.name === goalName);
-        if (goal) {
-            goal.progress += increment;
-            if (goal.progress >= goal.target) {
-                userProgress.socialGoals.dailyGoalsCompleted += 1;
-                userProgress.currentGoals = userProgress.currentGoals.filter(g => g.name !== goalName);
-            }
-        }
-
-        await userProgress.save();
-        res.json(userProgress);
-    } catch (err) {
-        console.error('Error updating progress:', err);
-        res.status(500).send('Internal Server Error');
-    }
-});
-
-// Add Social Goal to a User API
-app.post('/user/add-goal', async (req, res) => {
-    const { userID, goalName, target } = req.body;
-
-    try {
-        const userProgress = await UserProgress.findOneAndUpdate(
-            { userID },
-            { $push: { currentGoals: { name: goalName, progress: 0, target } } },
-            { new: true, upsert: true }
-        );
-        res.json({ message: 'Goal added!', goals: userProgress.currentGoals });
-    } catch (err) {
-        console.error('Error adding goal:', err);
-        res.status(500).send('Internal Server Error');
-    }
-});
-
-// Create Notification API
-app.post('/notifications', async (req, res) => {
-    try {
-        const newNotif = new Notification(req.body);
-        await newNotif.save();
-        res.status(201).json({ message: 'Notification created', notification: newNotif });
-    } catch (err) {
-        console.error('Error creating notification:', err);
-        res.status(500).send('Internal Server Error');
-    }
-});
-
-// Get Notifications for User
-app.get('/notifications/:userID', async (req, res) => {
-    try {
-        const notifs = await Notification.find({ user_id: req.params.userID });
-        res.json(notifs);
-    } catch (err) {
-        console.error('Error fetching notifications:', err);
-        res.status(500).send('Internal Server Error');
-    }
-});
-
-// Mark Notification as Read
-app.put('/notifications/:id/read', async (req, res) => {
-    try {
-        const notif = await Notification.findByIdAndUpdate(
-            req.params.id,
-            { read: true },
-            { new: true }
-        );
-        if (!notif) {
-            return res.status(404).json({ message: 'Notification not found' });
-        }
-        res.json({ message: 'Notification marked as read', notification: notif });
-    } catch (err) {
-        console.error('Error updating notification:', err);
+        console.error('Error fetching user groups:', err);
         res.status(500).send('Internal Server Error');
     }
 });
